@@ -93,7 +93,7 @@ namespace MyRombyMod
         }
     }
 }
-
+```
 🗡️ Mapped Weapons
 
 | ID | Name                | Type   | Controller / Access                          |
