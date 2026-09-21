@@ -1,8 +1,8 @@
 ﻿using System;
-using System.Reflection;
 using System.Threading;
 using HarmonyLib;
 using UnityEngine;
+using TwoDefender.SaveSystem;
 
 using Il2CppCollections = Il2CppSystem.Collections.Generic;
 using Object = UnityEngine.Object;
@@ -50,6 +50,9 @@ namespace RombyLib
         /// <summary>Gets the weapons, combat helpers, and weapon management controller.</summary>
         public static WeaponsController Weapons { get; } = new WeaponsController();
 
+        /// <summary>Gets the skill tree and ability management controller.</summary>
+        public static SkillsController Skills { get; } = new SkillsController();
+
         static Romby()
         {
             Init();
@@ -70,6 +73,7 @@ namespace RombyLib
                 var harmony = new Harmony(Hook.ModGUID);
                 harmony.CreateClassProcessor(typeof(PlrPatches)).Patch();
                 _isPatched = true;
+                Debug.Log("[RombyLib] Initialized and patched player hooks.");
             }
             catch (Exception ex)
             {
@@ -124,6 +128,75 @@ namespace RombyLib
             }
         }
 
+        /// <summary>Gets or sets the current world position of the player.</summary>
+        public static Vector3 Position
+        {
+            get => IsValid(Controller) ? Controller.transform.position : Vector3.zero;
+            set
+            {
+                if (IsValid(Controller))
+                    Controller.transform.position = value;
+            }
+        }
+
+        /// <summary>Teleports the player to a target 3D world position.</summary>
+        public static void Teleport(Vector3 position)
+        {
+            if (IsValid(Controller))
+            {
+                Controller.transform.position = position;
+                Debug.Log($"[RombyLib] Teleported player to {position}.");
+            }
+        }
+
+        /// <summary>Teleports the player to target X and Y coordinates, preserving Z.</summary>
+        public static void Teleport(float x, float y)
+        {
+            Teleport(new Vector3(x, y, Position.z));
+        }
+
+        /// <summary>Gets or sets whether the player is facing right.</summary>
+        public static bool FacingRight
+        {
+            get => IsValid(Controller) && Controller.FacingRight;
+            set
+            {
+                if (IsValid(Controller))
+                    Controller.SetPlayerFacing(value);
+            }
+        }
+
+        /// <summary>Gets or sets whether player movement is currently blocked.</summary>
+        public static bool MovementBlocked
+        {
+            get => IsValid(Controller) && Controller.IsMovementBlocked();
+            set
+            {
+                if (IsValid(Controller))
+                    Controller.SetMovementBlocked(value);
+            }
+        }
+
+        /// <summary>Respawns the player at the spawn point.</summary>
+        public static void Respawn()
+        {
+            if (IsValid(Controller))
+            {
+                Controller.OnPlayerRespawn();
+                Debug.Log("[RombyLib] Player respawned.");
+            }
+        }
+
+        /// <summary>Resets all active states and effects on the player.</summary>
+        public static void ResetStates()
+        {
+            if (IsValid(Controller))
+            {
+                Controller.ResetAllPlayerStates();
+                Debug.Log("[RombyLib] Player states reset.");
+            }
+        }
+
         #region Internal Patches
         [HarmonyPatch(typeof(PlayerController))]
         private static class PlrPatches
@@ -151,6 +224,237 @@ namespace RombyLib
             }
         }
         #endregion
+    }
+
+    /// <summary>
+    /// Controls player skills, skill tree progression, and passive ability toggles.
+    /// </summary>
+    public class SkillsController
+    {
+        private SkillSystemManager Manager => SkillSystemManager.Instance;
+        private SkillTreeManager TreeManager => SkillTreeManager.Instance;
+
+        internal SkillsController() { }
+
+        /// <summary>Checks whether a skill is currently unlocked and active.</summary>
+        public bool Has(SkillType skill) => Romby.IsValid(Manager) && Manager.IsSkillActive(skill);
+
+        /// <summary>Checks whether a skill has been acquired/purchased.</summary>
+        public bool IsAcquired(SkillType skill) => Romby.IsValid(Manager) && Manager.IsSkillAcquired(skill);
+
+        /// <summary>Checks whether an acquired skill is temporarily toggled off.</summary>
+        public bool IsToggledOff(SkillType skill) => Romby.IsValid(Manager) && Manager.IsSkillToggleDisabled(skill);
+
+        /// <summary>List of all currently active skills.</summary>
+        public Il2CppCollections.List<SkillType> ActiveSkills => Romby.IsValid(Manager) ? Manager.GetActiveSkills() : null;
+
+        /// <summary>List of all disabled or toggled-off skills.</summary>
+        public Il2CppCollections.List<SkillType> DisabledSkills => Romby.IsValid(Manager) ? Manager.GetDisabledSkills() : null;
+
+        /// <summary>Gets the skill point cost of a skill from the tree UI.</summary>
+        public int GetCost(SkillType skill)
+        {
+            if (!Romby.IsValid(TreeManager) || TreeManager.nodeUIs == null)
+                return 0;
+            foreach (var node in TreeManager.nodeUIs)
+            {
+                if (node != null && node.skillType == skill)
+                    return node.skillCost;
+            }
+            return 0;
+        }
+
+        /// <summary>Checks if player has enough points to purchase the skill.</summary>
+        public bool CanAfford(SkillType skill) => Points >= GetCost(skill);
+
+        /// <summary>Attempts to purchase and unlock the skill, deducting skill points.</summary>
+        public bool TryBuy(SkillType skill)
+        {
+            if (IsAcquired(skill))
+            {
+                Debug.LogWarning($"[RombyLib.Skills] Cannot buy skill {skill}: already acquired.");
+                return false;
+            }
+            int cost = GetCost(skill);
+            if (Points < cost)
+            {
+                Debug.LogWarning($"[RombyLib.Skills] Cannot buy skill {skill}: requires {cost} points, available {Points}.");
+                return false;
+            }
+            Points -= cost;
+            bool result = Unlock(skill, false);
+            if (result)
+                Debug.Log($"[RombyLib.Skills] Successfully bought skill: {skill} for {cost} points.");
+            return result;
+        }
+
+        /// <summary>Unlocks a skill. If consumePoints is true, deducts its point cost.</summary>
+        public bool Unlock(SkillType skill, bool consumePoints = false)
+        {
+            if (consumePoints)
+                return TryBuy(skill);
+            if (Romby.IsValid(Manager))
+            {
+                Manager.SetSkillActive(skill);
+                if (Romby.IsValid(TreeManager))
+                    TreeManager.RefreshUI();
+                Debug.Log($"[RombyLib.Skills] Unlocked skill: {skill}.");
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>Revokes an unlocked skill.</summary>
+        public void Revoke(SkillType skill)
+        {
+            if (Romby.IsValid(Manager))
+            {
+                Manager.SetSkillInactive(skill);
+                if (Romby.IsValid(TreeManager))
+                    TreeManager.RefreshUI();
+                Debug.Log($"[RombyLib.Skills] Revoked skill: {skill}.");
+            }
+        }
+
+        /// <summary>Enables a toggled-off skill.</summary>
+        public void Enable(SkillType skill)
+        {
+            if (Romby.IsValid(Manager))
+            {
+                Manager.EnableSkill(skill);
+                Debug.Log($"[RombyLib.Skills] Enabled skill: {skill}.");
+            }
+        }
+
+        /// <summary>Disables/toggles off an active skill.</summary>
+        public void Disable(SkillType skill)
+        {
+            if (Romby.IsValid(Manager))
+            {
+                Manager.DisableSkill(skill);
+                Debug.Log($"[RombyLib.Skills] Disabled skill: {skill}.");
+            }
+        }
+
+        /// <summary>Resets all acquired skills and restores default state.</summary>
+        public void ResetAll()
+        {
+            if (Romby.IsValid(Manager))
+            {
+                Manager.ResetAllSkills();
+                Debug.Log("[RombyLib.Skills] Reset all skills.");
+            }
+        }
+
+        /// <summary>Gets or sets the current unspent skill points.</summary>
+        public int Points
+        {
+            get
+            {
+                if (Romby.IsValid(GameManager.Instance))
+                    return GameManager.Instance.playerSkillPoints;
+
+                return SaveManager.Instance?.GetCurrentSaveData()?.player?.skillPoints ?? 0;
+            }
+            set
+            {
+                if (Romby.IsValid(GameManager.Instance))
+                {
+                    GameManager.Instance.playerSkillPoints = value;
+                    GameManager.Instance.UpdateSkillPointsIcon();
+                }
+
+                var save = SaveManager.Instance?.GetCurrentSaveData();
+                if (save?.player != null)
+                {
+                    save.player.skillPoints = value;
+                    if (Romby.IsValid(TreeManager))
+                        TreeManager.RefreshUI();
+                }
+            }
+        }
+
+        /// <summary>Gets or sets the lifetime total of skill points earned.</summary>
+        public int TotalPointsEarned
+        {
+            get
+            {
+                var save = SaveManager.Instance?.GetCurrentSaveData();
+                return save?.player != null ? save.player.skillPointsTotalEarned : 0;
+            }
+            set
+            {
+                var save = SaveManager.Instance?.GetCurrentSaveData();
+                if (save?.player != null)
+                    save.player.skillPointsTotalEarned = value;
+            }
+        }
+
+        /// <summary>Checks whether auto-revive is currently available.</summary>
+        public bool IsAutoReviveAvailable => Romby.IsValid(Manager) && Manager.IsAutoReviveAvailable();
+
+        /// <summary>Recharges auto-revive charge.</summary>
+        public void RechargeAutoRevive()
+        {
+            if (Romby.IsValid(Manager))
+            {
+                Manager.ReactivateAutoRevive();
+                Debug.Log("[RombyLib.Skills] Recharged auto-revive.");
+            }
+        }
+
+        /// <summary>Attempts to trigger auto-revive.</summary>
+        public bool TryAutoRevive()
+        {
+            if (Romby.IsValid(Manager))
+            {
+                bool success = Manager.TryAutoRevive();
+                Debug.Log($"[RombyLib.Skills] Auto-revive attempt: {(success ? "Success" : "Failed")}.");
+                return success;
+            }
+            return false;
+        }
+
+        /// <summary>Checks whether all skills in the skill tree are acquired.</summary>
+        public bool AreAllSkillsAcquired => Romby.IsValid(TreeManager) && TreeManager.TodasLasHabilidadesAdquiridas();
+
+        /// <summary>Returns the count of acquired skills and total available skills.</summary>
+        public (int acquired, int total) Progress
+        {
+            get
+            {
+                if (Romby.IsValid(TreeManager))
+                {
+                    var p = TreeManager.GetProgresoHabilidades();
+                    return (p.Item1, p.Item2);
+                }
+                return (0, 0);
+            }
+        }
+
+        /// <summary>Checks if player has Dash skill unlocked.</summary>
+        public bool CanDash => Has(SkillType.Dash);
+
+        /// <summary>Checks if radar perk is currently active.</summary>
+        public bool HasRadar => Romby.IsValid(Manager) && Manager.HasRadarActive();
+
+        /// <summary>Checks if enemy health bar perk is active.</summary>
+        public bool HasEnemyHealthBars => Romby.IsValid(Manager) && Manager.HasAnalistaActive();
+
+        /// <summary>Checks if boss health bar perk is active.</summary>
+        public bool HasBossHealthBars => Romby.IsValid(Manager) && Manager.HasRastreadorActive();
+
+        /// <summary>Checks if damage numbers display is active.</summary>
+        public bool HasDamageNumbers => Has(SkillType.Matematico);
+
+        /// <summary>Checks if chronostasis ability is active.</summary>
+        public bool HasChronostasis => Romby.IsValid(Manager) && Manager.HasChronostasisActive();
+
+        /// <summary>Gets the current store discount multiplier.</summary>
+        public float StoreDiscountMultiplier => Romby.IsValid(Manager) ? Manager.GetStoreDiscountMultiplier() : 1f;
+
+        /// <summary>Gets the maximum weapon level limit allowed by active skills.</summary>
+        public int MaxWeaponLevel => Romby.IsValid(Manager) ? Manager.GetMaxWeaponLevel() : 5;
     }
 
     /// <summary>
@@ -242,6 +546,8 @@ namespace RombyLib
 
             LegLeft = GetRenderer(PivotLegLeft, "PiernaL");
             LegRight = GetRenderer(PivotLegRight, "PiernaR");
+
+            Debug.Log("[RombyLib.Skin] Refreshed skin references.");
         }
 
         private static SpriteRenderer GetRenderer(Transform parent, string childName)
@@ -259,6 +565,7 @@ namespace RombyLib
             if (Romby.IsValid(Body))
             {
                 Body.color = color;
+                Debug.Log($"[RombyLib.Skin] Body color set to {color}.");
             }
             else
             {
@@ -273,10 +580,237 @@ namespace RombyLib
     public class StatsController
     {
         private PlayerController Player => Romby.Controller;
+        private GameManager GM => GameManager.Instance;
 
         internal StatsController() { }
 
-        /// <summary>Current movement speed modifier of the player.</summary>
+        #region Money
+        /// <summary>Current money available in real-time.</summary>
+        public int Money
+        {
+            get
+            {
+                if (Romby.IsValid(GM))
+                    return GM.playerMoney;
+
+                return SaveManager.Instance?.GetCurrentSaveData()?.player?.money ?? 0;
+            }
+            set
+            {
+                int val = Mathf.Max(0, value);
+                if (Romby.IsValid(GM))
+                {
+                    GM.playerMoney = val;
+                    GM.UpdateMoneyUI();
+                }
+
+                var save = SaveManager.Instance?.GetCurrentSaveData();
+                if (save?.player != null)
+                    save.player.money = val;
+            }
+        }
+
+        /// <summary>Safely spends money with game UI and audio reaction.</summary>
+        public bool SpendMoney(int cost)
+        {
+            if (Romby.IsValid(GM))
+            {
+                if (GM.SpendMoney(cost))
+                {
+                    var save = SaveManager.Instance?.GetCurrentSaveData();
+                    if (save?.player != null)
+                        save.player.money = GM.playerMoney;
+                    Debug.Log($"[RombyLib.Stats] Spent {cost} money. Remaining: {Money}.");
+                    return true;
+                }
+                Debug.LogWarning($"[RombyLib.Stats] Failed to spend {cost} money. Current: {Money}.");
+                return false;
+            }
+
+            if (Money >= cost)
+            {
+                Money -= cost;
+                Debug.Log($"[RombyLib.Stats] Spent {cost} money. Remaining: {Money}.");
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>Adds money to the player triggering animations and sound.</summary>
+        public void AddMoney(int amount)
+        {
+            if (Romby.IsValid(GM))
+            {
+                GM.AddMoney(amount);
+                var save = SaveManager.Instance?.GetCurrentSaveData();
+                if (save?.player != null)
+                    save.player.money = GM.playerMoney;
+            }
+            else
+            {
+                Money += amount;
+            }
+            Debug.Log($"[RombyLib.Stats] Added {amount} money. Total: {Money}.");
+        }
+        #endregion
+
+        #region Lives / Health
+        /// <summary>Gets or sets player current lives/health.</summary>
+        public int Lives
+        {
+            get
+            {
+                if (Romby.IsValid(GM))
+                    return GM.playerCurrentLives;
+
+                return SaveManager.Instance?.GetCurrentSaveData()?.player?.currentLives ?? 0;
+            }
+            set
+            {
+                int clamped = Mathf.Clamp(value, 0, MaxLives);
+
+                if (Romby.IsValid(GM))
+                {
+                    int current = GM.playerCurrentLives;
+                    int diff = clamped - current;
+
+                    if (diff > 0)
+                        GM.PlayerGainLives(diff);
+                    else if (diff < 0)
+                        GM.PlayerLoseLives(-diff);
+                }
+
+                var save = SaveManager.Instance?.GetCurrentSaveData();
+                if (save?.player != null)
+                    save.player.currentLives = clamped;
+            }
+        }
+
+        /// <summary>Gets or sets player maximum lives capacity.</summary>
+        public int MaxLives
+        {
+            get
+            {
+                if (Romby.IsValid(GM))
+                    return GM.playerMaxLives;
+
+                return SaveManager.Instance?.GetCurrentSaveData()?.player?.maxLives ?? 1;
+            }
+            set
+            {
+                int val = Mathf.Max(1, value);
+                if (Romby.IsValid(GM))
+                    GM.playerMaxLives = val;
+
+                var save = SaveManager.Instance?.GetCurrentSaveData();
+                if (save?.player != null)
+                    save.player.maxLives = val;
+            }
+        }
+
+        /// <summary>Restores player lives by a specified amount.</summary>
+        public void Heal(int amount)
+        {
+            if (Romby.IsValid(GM))
+                GM.PlayerHeal(amount);
+            else
+                Lives += amount;
+
+            Debug.Log($"[RombyLib.Stats] Healed player by {amount}. Current lives: {Lives}/{MaxLives}.");
+        }
+
+        /// <summary>Applies damage to the player, reducing lives.</summary>
+        public void TakeDamage(int damage)
+        {
+            if (Romby.IsValid(GM))
+                GM.PlayerTakeDamage(damage);
+            else
+                Lives -= damage;
+
+            Debug.Log($"[RombyLib.Stats] Player took {damage} damage. Current lives: {Lives}/{MaxLives}.");
+        }
+
+        /// <summary>Instantly kills the player.</summary>
+        public void Kill()
+        {
+            if (Romby.IsValid(GM))
+                GM.PlayerTakeDamage(Lives);
+            else
+                Lives = 0;
+
+            Debug.Log("[RombyLib.Stats] Player killed.");
+        }
+        #endregion
+
+        #region Level & XP
+        /// <summary>Gets or sets player current level.</summary>
+        public int Level
+        {
+            get
+            {
+                if (Romby.IsValid(GM))
+                    return GM.playerLevel;
+
+                return SaveManager.Instance?.GetCurrentSaveData()?.player?.level ?? 1;
+            }
+            set
+            {
+                int val = Mathf.Max(1, value);
+                if (Romby.IsValid(GM))
+                    GM.playerLevel = val;
+
+                var save = SaveManager.Instance?.GetCurrentSaveData();
+                if (save?.player != null)
+                    save.player.level = val;
+            }
+        }
+
+        /// <summary>Gets or sets player current experience points.</summary>
+        public int XP
+        {
+            get
+            {
+                if (Romby.IsValid(GM))
+                    return GM.playerCurrentXP;
+
+                return SaveManager.Instance?.GetCurrentSaveData()?.player?.currentXP ?? 0;
+            }
+            set
+            {
+                int val = Mathf.Max(0, value);
+                if (Romby.IsValid(GM))
+                    GM.playerCurrentXP = val;
+
+                var save = SaveManager.Instance?.GetCurrentSaveData();
+                if (save?.player != null)
+                    save.player.currentXP = val;
+            }
+        }
+
+        /// <summary>Adds experience points to the player.</summary>
+        public void AddXP(int amount)
+        {
+            if (Romby.IsValid(GM))
+                GM.AddXP(amount);
+            else
+                XP += amount;
+
+            Debug.Log($"[RombyLib.Stats] Added {amount} XP. Total: {XP}.");
+        }
+
+        /// <summary>Forces an immediate player level up.</summary>
+        public void ForceLevelUp()
+        {
+            if (Romby.IsValid(GM))
+            {
+                GM.ForceLevelUp();
+                Debug.Log($"[RombyLib.Stats] Forced level up. New level: {Level}.");
+            }
+        }
+        #endregion
+
+        #region Speed & Status Modifiers
+        /// <summary>Gets or sets the current movement speed.</summary>
         public float MoveSpeed
         {
             get => Romby.IsValid(Player) ? Player.moveSpeed : 0f;
@@ -287,10 +821,10 @@ namespace RombyLib
             }
         }
 
-        /// <summary>Base movement speed of the player before any buffs or modifiers.</summary>
+        /// <summary>Gets player base movement speed without buffs.</summary>
         public float BaseMoveSpeed => Romby.IsValid(Player) ? Player.GetBaseMoveSpeed() : 0f;
 
-        /// <summary>Maximum allowed movement speed cap.</summary>
+        /// <summary>Gets or sets maximum speed cap.</summary>
         public float MaxTotalSpeed
         {
             get => Romby.IsValid(Player) ? Player.maxTotalSpeed : 0f;
@@ -301,118 +835,138 @@ namespace RombyLib
             }
         }
 
-        /// <summary>
-        /// Applies a temporary speed boost multiplier for a specified duration.
-        /// </summary>
-        /// <param name="multiplier">Speed multiplier (e.g. 1.5 for +50%).</param>
-        /// <param name="duration">Duration in seconds.</param>
-        /// <param name="boostId">Unique identifier used to track or cancel this boost.</param>
+        /// <summary>Applies a temporary speed boost multiplier.</summary>
         public void ApplySpeedBoost(float multiplier, float duration, string boostId = "custom_mod_boost")
         {
             if (Romby.IsValid(Player))
             {
                 Player.ApplyTemporarySpeedBoost(multiplier, duration, boostId);
-            }
-            else
-            {
-                Debug.LogWarning("[RombyLib.Stats] Cannot apply speed boost: Player is not loaded.");
+                Debug.Log($"[RombyLib.Stats] Applied speed boost '{boostId}' (x{multiplier}) for {duration}s.");
             }
         }
 
-        /// <summary>
-        /// Removes an active speed boost identified by its ID.
-        /// </summary>
+        /// <summary>Removes a temporary speed boost by its ID.</summary>
         public void RemoveSpeedBoost(string boostId)
         {
             if (Romby.IsValid(Player))
             {
                 Player.RemoveSpeedBoost(boostId);
-            }
-            else
-            {
-                Debug.LogWarning("[RombyLib.Stats] Cannot remove speed boost: Player is not loaded.");
+                Debug.Log($"[RombyLib.Stats] Removed speed boost '{boostId}'.");
             }
         }
 
-        /// <summary>Base critical strike chance.</summary>
+        /// <summary>Gets or sets base critical strike chance.</summary>
         public float CriticalChance
         {
             get => Romby.IsValid(Player) ? Player.criticalChance : 0f;
             set
             {
                 if (Romby.IsValid(Player)) Player.criticalChance = value;
-                else Debug.LogWarning("[RombyLib.Stats] Failed to set CriticalChance: Player is not loaded.");
             }
         }
 
-        /// <summary>Total calculated critical hit chance including bonuses.</summary>
+        /// <summary>Gets current critical strike chance including buffs.</summary>
         public float CurrentCriticalChance => Romby.IsValid(Player) ? Player.GetCurrentCritChance() : 0f;
 
-        /// <summary>Critical hit damage multiplier.</summary>
+        /// <summary>Gets or sets critical strike damage multiplier.</summary>
         public float CriticalMultiplier
         {
             get => Romby.IsValid(Player) ? Player.criticalMultiplier : 0f;
             set
             {
                 if (Romby.IsValid(Player)) Player.criticalMultiplier = value;
-                else Debug.LogWarning("[RombyLib.Stats] Failed to set CriticalMultiplier: Player is not loaded.");
             }
         }
 
-        /// <summary>Indicates whether the player is currently dizzy.</summary>
+        /// <summary>Checks whether lapas are attached to the player.</summary>
+        public bool HasLapas => Romby.IsValid(Player) && Player.HasLapasAttached;
+
+        /// <summary>Attaches a lapa to the player.</summary>
+        public void AddLapa()
+        {
+            if (Romby.IsValid(Player))
+            {
+                Player.AddLapa();
+                Debug.Log("[RombyLib.Stats] Added lapa to player.");
+            }
+        }
+
+        /// <summary>Removes an attached lapa from the player.</summary>
+        public void RemoveLapa()
+        {
+            if (Romby.IsValid(Player))
+            {
+                Player.RemoveLapa();
+                Debug.Log("[RombyLib.Stats] Removed lapa from player.");
+            }
+        }
+
+        /// <summary>Checks whether Tesla pole damage buff is active.</summary>
+        public bool HasTeslaBuff => Romby.IsValid(Player) && Player.GetTeslaPoleDamageMultiplier() > 1f;
+
+        /// <summary>Gets Tesla pole damage multiplier.</summary>
+        public float TeslaDamageMultiplier => Romby.IsValid(Player) ? Player.GetTeslaPoleDamageMultiplier() : 1f;
+
+        /// <summary>Applies Tesla pole damage buff to the player.</summary>
+        public void ApplyTeslaBuff()
+        {
+            if (Romby.IsValid(Player))
+            {
+                Player.ApplyTeslaPoleBuff();
+                Debug.Log("[RombyLib.Stats] Applied Tesla pole buff.");
+            }
+        }
+
+        /// <summary>Checks whether Vendaval attack speed boost is active.</summary>
+        public bool HasVendavalBoost => Romby.IsValid(Player) && Player.HasVendavalAttackSpeedBoost();
+
+        /// <summary>Gets Vendaval attack speed multiplier.</summary>
+        public float VendavalMultiplier => Romby.IsValid(Player) ? Player.GetVendavalAttackSpeedMultiplier() : 1f;
+
+        /// <summary>Checks if player is dizzy.</summary>
         public bool IsDizzy => Romby.IsValid(Player) && Player.IsDizzy;
 
-        /// <summary>Indicates whether the player is currently frozen.</summary>
+        /// <summary>Checks if player is frozen.</summary>
         public bool IsFrozen => Romby.IsValid(Player) && Player.IsFrozen;
 
-        /// <summary>Indicates whether the player is currently taking burn damage.</summary>
+        /// <summary>Checks if player is burning.</summary>
         public bool IsBurning => Romby.IsValid(Player) && Player.IsBurning;
 
-        /// <summary>Indicates whether the player is in meditation state.</summary>
+        /// <summary>Checks if player is in meditation state.</summary>
         public bool IsMeditationState => Romby.IsValid(Player) && Player.IsInMeditationState();
 
-        /// <summary>
-        /// Freezes the player for a given duration, optionally applying directional knockback.
-        /// </summary>
+        /// <summary>Applies freeze effect to the player for a duration.</summary>
         public void Freeze(float duration, Vector2? hitDirection = null)
         {
-            if (!Romby.IsValid(Player))
-            {
-                Debug.LogWarning("[RombyLib.Stats] Cannot freeze player: Player is not loaded.");
-                return;
-            }
-
+            if (!Romby.IsValid(Player)) return;
             var d = new Il2CppSystem.Nullable<float>(duration);
             var h = hitDirection.HasValue
                 ? new Il2CppSystem.Nullable<Vector2>(hitDirection.Value)
                 : new Il2CppSystem.Nullable<Vector2>();
-
             Player.ApplyFreeze(d, h);
+            Debug.Log($"[RombyLib.Stats] Froze player for {duration}s.");
         }
 
-        /// <summary>
-        /// Immediately cancels the freeze status on the player.
-        /// </summary>
+        /// <summary>Cancels active freeze effect immediately.</summary>
         public void CancelFreeze()
         {
-            if (Romby.IsValid(Player)) Player.CancelFreeze();
-            else Debug.LogWarning("[RombyLib.Stats] Cannot cancel freeze: Player is not loaded.");
+            if (Romby.IsValid(Player))
+            {
+                Player.CancelFreeze();
+                Debug.Log("[RombyLib.Stats] Canceled freeze.");
+            }
         }
 
-        /// <summary>
-        /// Applies burn status effect for a set duration with damage over time.
-        /// </summary>
+        /// <summary>Applies burning damage-over-time effect to the player.</summary>
         public void Burn(float duration, float damagePerSecond)
         {
             if (Romby.IsValid(Player))
             {
                 Player.ApplyBurn(duration, damagePerSecond);
-            }
-            else
-            {
-                Debug.LogWarning("[RombyLib.Stats] Cannot burn player: Player is not loaded.");
+                Debug.Log($"[RombyLib.Stats] Applied burn for {duration}s ({damagePerSecond} DPS).");
             }
         }
+        #endregion
     }
 
     /// <summary>
@@ -497,38 +1051,62 @@ namespace RombyLib
             }
 
             if (FastOnWeaponChanged != null)
+            {
                 FastOnWeaponChanged(plr, weaponId);
+                Debug.Log($"[RombyLib.Weapons] Switched weapon to ID {weaponId}.");
+            }
             else
+            {
                 Debug.LogWarning("[RombyLib.Weapons] FastOnWeaponChanged delegate is unavailable.");
+            }
         }
 
         /// <summary>Switches active weapon by <see cref="WeaponType"/>.</summary>
         public void SwitchWeapon(WeaponType weapon) => SwitchWeapon((int)weapon);
 
-        /// <summary>Equips weapon into player slots.</summary>
+        /// <summary>Equips weapon into player slots by type.</summary>
         public void EquipSlot(WeaponType weapon) => EquipSlot((int)weapon);
 
         /// <summary>Equips weapon into player slots by ID.</summary>
         public void EquipSlot(int weaponId)
         {
-            if (Romby.IsValid(Player)) Player.OnWeaponEquipped(weaponId);
-            else Debug.LogWarning($"[RombyLib.Weapons] Cannot equip weapon {weaponId}: Player is not loaded.");
+            if (Romby.IsValid(Player))
+            {
+                Player.OnWeaponEquipped(weaponId);
+                Debug.Log($"[RombyLib.Weapons] Equipped weapon ID {weaponId}.");
+            }
+            else
+            {
+                Debug.LogWarning($"[RombyLib.Weapons] Cannot equip weapon {weaponId}: Player is not loaded.");
+            }
         }
 
-        /// <summary>Unequips weapon from player slots.</summary>
+        /// <summary>Unequips weapon from player slots by type.</summary>
         public void UnequipSlot(WeaponType weapon) => UnequipSlot((int)weapon);
 
         /// <summary>Unequips weapon from player slots by ID.</summary>
         public void UnequipSlot(int weaponId)
         {
-            if (Romby.IsValid(Player)) Player.OnWeaponUnequipped(weaponId);
-            else Debug.LogWarning($"[RombyLib.Weapons] Cannot unequip weapon {weaponId}: Player is not loaded.");
+            if (Romby.IsValid(Player))
+            {
+                Player.OnWeaponUnequipped(weaponId);
+                Debug.Log($"[RombyLib.Weapons] Unequipped weapon ID {weaponId}.");
+            }
+            else
+            {
+                Debug.LogWarning($"[RombyLib.Weapons] Cannot unequip weapon {weaponId}: Player is not loaded.");
+            }
         }
 
         /// <summary>Triggers the active attack/firing behavior for a weapon.</summary>
         public bool ActivateWeapon(WeaponType weapon)
         {
-            if (Romby.IsValid(Player)) return Player.ActivateWeaponById((int)weapon);
+            if (Romby.IsValid(Player))
+            {
+                bool success = Player.ActivateWeaponById((int)weapon);
+                Debug.Log($"[RombyLib.Weapons] Activated weapon {weapon}: {(success ? "Success" : "Failed")}.");
+                return success;
+            }
             Debug.LogWarning($"[RombyLib.Weapons] Cannot activate weapon {weapon}: Player is not loaded.");
             return false;
         }
@@ -536,15 +1114,29 @@ namespace RombyLib
         /// <summary>Cancels active action for a specific weapon.</summary>
         public void CancelWeapon(WeaponType weapon)
         {
-            if (Romby.IsValid(Player)) Player.CancelActiveWeapon((int)weapon);
-            else Debug.LogWarning($"[RombyLib.Weapons] Cannot cancel weapon {weapon}: Player is not loaded.");
+            if (Romby.IsValid(Player))
+            {
+                Player.CancelActiveWeapon((int)weapon);
+                Debug.Log($"[RombyLib.Weapons] Canceled weapon {weapon}.");
+            }
+            else
+            {
+                Debug.LogWarning($"[RombyLib.Weapons] Cannot cancel weapon {weapon}: Player is not loaded.");
+            }
         }
 
         /// <summary>Cancels active action for all currently firing weapons.</summary>
         public void CancelAllActiveWeapons()
         {
-            if (Romby.IsValid(Player)) Player.CancelAllActiveWeapons();
-            else Debug.LogWarning("[RombyLib.Weapons] Cannot cancel all active weapons: Player is not loaded.");
+            if (Romby.IsValid(Player))
+            {
+                Player.CancelAllActiveWeapons();
+                Debug.Log("[RombyLib.Weapons] Canceled all active weapons.");
+            }
+            else
+            {
+                Debug.LogWarning("[RombyLib.Weapons] Cannot cancel all active weapons: Player is not loaded.");
+            }
         }
 
         /// <summary>Gets the list of weapon IDs currently unlocked by the player.</summary>
@@ -565,7 +1157,10 @@ namespace RombyLib
         {
             var plr = Player;
             if (Romby.IsValid(plr) && FastCycleWeapon != null)
+            {
                 FastCycleWeapon(plr, 1);
+                Debug.Log("[RombyLib.Weapons] Cycled to next weapon.");
+            }
         }
 
         /// <summary>Cycles to the previous weapon in inventory.</summary>
@@ -573,7 +1168,10 @@ namespace RombyLib
         {
             var plr = Player;
             if (Romby.IsValid(plr) && FastCycleWeapon != null)
+            {
                 FastCycleWeapon(plr, -1);
+                Debug.Log("[RombyLib.Weapons] Cycled to previous weapon.");
+            }
         }
         #endregion
 
@@ -637,13 +1235,25 @@ namespace RombyLib
         public bool IsInsideBlackHole(GameObject obj) => BlackHoleController.IsObjectInAnyBlackHole(obj);
 
         /// <summary>Immediately destroys all active Uncle Frank minions.</summary>
-        public void DestroyAllUncleFranks() => TioPacoController.DestroyAllActiveTioPacos();
+        public void DestroyAllUncleFranks()
+        {
+            TioPacoController.DestroyAllActiveTioPacos();
+            Debug.Log("[RombyLib.Weapons] Destroyed all active Uncle Franks.");
+        }
 
         /// <summary>Immediately collapses and destroys all active black holes.</summary>
-        public void DestroyAllExistentialVoids() => BlackHoleController.DestroyAllActiveBlackHoles();
+        public void DestroyAllExistentialVoids()
+        {
+            BlackHoleController.DestroyAllActiveBlackHoles();
+            Debug.Log("[RombyLib.Weapons] Destroyed all active Existential Voids.");
+        }
 
         /// <summary>Immediately destroys all active Tesla pawns.</summary>
-        public void DestroyAllTeslaPawns() => ElectricPoleController.DestroyAllActiveElectricPoles();
+        public void DestroyAllTeslaPawns()
+        {
+            ElectricPoleController.DestroyAllActiveElectricPoles();
+            Debug.Log("[RombyLib.Weapons] Destroyed all active Tesla Pawns.");
+        }
         #endregion
     }
 
@@ -726,7 +1336,14 @@ namespace RombyLib
         public float ReflectionChance => IsAvailable ? Raw.reflectionChance : 0f;
 
         /// <summary>Forces recalculation and repositioning of orbiting satellites.</summary>
-        public void ForceSync() { if (IsAvailable) Raw.SyncAllActiveSatellites(); }
+        public void ForceSync()
+        {
+            if (IsAvailable)
+            {
+                Raw.SyncAllActiveSatellites();
+                Debug.Log("[RombyLib.Weapons] Synced Satellite Shield satellites.");
+            }
+        }
     }
 
     /// <summary>Helper for Weapon 10 (Treble Clef / Flaming Trumpet).</summary>
@@ -738,7 +1355,14 @@ namespace RombyLib
         public bool StartFlame() => IsAvailable && Raw.TryStartFlame();
 
         /// <summary>Stops flamethrower stream.</summary>
-        public void StopFlame() { if (IsAvailable) Raw.StopFlame(); }
+        public void StopFlame()
+        {
+            if (IsAvailable)
+            {
+                Raw.StopFlame();
+                Debug.Log("[RombyLib.Weapons] Stopped Treble Clef flame.");
+            }
+        }
 
         /// <summary>Checks whether flamethrower is firing.</summary>
         public bool IsFiring => IsAvailable && Raw.IsFiring;
@@ -756,7 +1380,14 @@ namespace RombyLib
         public float CurrentPitch => Arma10Controller.GetTrumpetPitch(CurrentNoteIndex);
 
         /// <summary>Removes burn instances created by this weapon.</summary>
-        public void ClearAllBurns() { if (IsAvailable) Raw.ClearAllBurns(); }
+        public void ClearAllBurns()
+        {
+            if (IsAvailable)
+            {
+                Raw.ClearAllBurns();
+                Debug.Log("[RombyLib.Weapons] Cleared Treble Clef burns.");
+            }
+        }
     }
 
     /// <summary>Helper for Weapon 11 (Big Bucks).</summary>
@@ -765,13 +1396,34 @@ namespace RombyLib
         internal BigBucksHelper(Func<Arma11Controller> getter) : base(getter) { }
 
         /// <summary>Begins charging the weapon attack.</summary>
-        public void StartCharging() { if (IsAvailable) Raw.StartCharging(); }
+        public void StartCharging()
+        {
+            if (IsAvailable)
+            {
+                Raw.StartCharging();
+                Debug.Log("[RombyLib.Weapons] Big Bucks started charging.");
+            }
+        }
 
         /// <summary>Releases charge and fires attack.</summary>
-        public void ReleaseCharge() { if (IsAvailable) Raw.ReleaseCharge(); }
+        public void ReleaseCharge()
+        {
+            if (IsAvailable)
+            {
+                Raw.ReleaseCharge();
+                Debug.Log("[RombyLib.Weapons] Big Bucks released charge.");
+            }
+        }
 
         /// <summary>Cancels current charge without firing.</summary>
-        public void CancelCharge() { if (IsAvailable) Raw.CancelCharge(); }
+        public void CancelCharge()
+        {
+            if (IsAvailable)
+            {
+                Raw.CancelCharge();
+                Debug.Log("[RombyLib.Weapons] Big Bucks canceled charge.");
+            }
+        }
 
         /// <summary>Attempts to fire immediately.</summary>
         public bool Fire() => IsAvailable && Raw.TryFire();
@@ -804,10 +1456,26 @@ namespace RombyLib
         public float GetCaptureChance(EnemyBase enemy) => IsAvailable ? Raw.CalculateCaptureChance(enemy) : 0f;
 
         /// <summary>Attempts to capture an enemy into storage.</summary>
-        public bool TryCapture(EnemyBase enemy) => IsAvailable && Raw.TryCapture(enemy);
+        public bool TryCapture(EnemyBase enemy)
+        {
+            if (IsAvailable)
+            {
+                bool success = Raw.TryCapture(enemy);
+                Debug.Log($"[RombyLib.Weapons] Bubblewitch capture attempt: {(success ? "Success" : "Failed")}.");
+                return success;
+            }
+            return false;
+        }
 
         /// <summary>Summons a previously captured monster at a world position.</summary>
-        public void SummonMonster(CapturedMonsterData data, Vector3 position) { if (IsAvailable) Raw.SummonMonster(data, position); }
+        public void SummonMonster(CapturedMonsterData data, Vector3 position)
+        {
+            if (IsAvailable)
+            {
+                Raw.SummonMonster(data, position);
+                Debug.Log($"[RombyLib.Weapons] Summoned monster at {position}.");
+            }
+        }
 
         /// <summary>List of captured monsters currently in team.</summary>
         public Il2CppCollections.List<CapturedMonsterData> Team => IsAvailable ? Raw.GetTeamMonsters() : null;
@@ -822,7 +1490,14 @@ namespace RombyLib
         public bool HasFreeSlot => IsAvailable && Raw.HasFreeTeamSlot();
 
         /// <summary>Selects active monster slot index.</summary>
-        public void Select(int index) { if (IsAvailable) Raw.SelectMonster(index); }
+        public void Select(int index)
+        {
+            if (IsAvailable)
+            {
+                Raw.SelectMonster(index);
+                Debug.Log($"[RombyLib.Weapons] Bubblewitch selected slot {index}.");
+            }
+        }
 
         /// <summary>Generates a procedural name for captured monster.</summary>
         public string GenerateRandomName() => IsAvailable ? Raw.GenerateRandomMonsterName() : string.Empty;
@@ -834,13 +1509,36 @@ namespace RombyLib
         internal MoonerangHelper(Func<BoomerangController> getter) : base(getter) { }
 
         /// <summary>Throws boomerang toward target position.</summary>
-        public bool Launch(Vector3 targetWorldPos) => IsAvailable && Raw.LaunchBoomerang(targetWorldPos);
+        public bool Launch(Vector3 targetWorldPos)
+        {
+            if (IsAvailable)
+            {
+                bool success = Raw.LaunchBoomerang(targetWorldPos);
+                Debug.Log($"[RombyLib.Weapons] Launched Moonerang toward {targetWorldPos}: {(success ? "Success" : "Failed")}.");
+                return success;
+            }
+            return false;
+        }
 
         /// <summary>Recalls boomerang back to player.</summary>
-        public void Recall() { if (IsAvailable) Raw.Recall(); }
+        public void Recall()
+        {
+            if (IsAvailable)
+            {
+                Raw.Recall();
+                Debug.Log("[RombyLib.Weapons] Moonerang recalled.");
+            }
+        }
 
         /// <summary>Immediately forces boomerang back into hand.</summary>
-        public void Reset() { if (IsAvailable) Raw.ForceReset(); }
+        public void Reset()
+        {
+            if (IsAvailable)
+            {
+                Raw.ForceReset();
+                Debug.Log("[RombyLib.Weapons] Moonerang forced reset.");
+            }
+        }
 
         /// <summary>Current flight state of boomerang.</summary>
         public BoomerangController.BoomerangState State => IsAvailable ? Raw.CurrentState : BoomerangController.BoomerangState.Inactive;
@@ -861,7 +1559,14 @@ namespace RombyLib
         public bool StartPixelizing() => IsAvailable && Raw.TryStartPixelizing();
 
         /// <summary>Stops pixelizing beam.</summary>
-        public void StopPixelizing() { if (IsAvailable) Raw.StopPixelizing(); }
+        public void StopPixelizing()
+        {
+            if (IsAvailable)
+            {
+                Raw.StopPixelizing();
+                Debug.Log("[RombyLib.Weapons] Stopped Bit Bang pixelizing.");
+            }
+        }
 
         /// <summary>Checks whether pixelizing beam is running.</summary>
         public bool IsPixelizing => IsAvailable && Raw.IsPixelizing;
@@ -879,7 +1584,14 @@ namespace RombyLib
         internal DivineRelocatorHelper(Func<Arma15Controller> getter) : base(getter) { }
 
         /// <summary>Spawns grab hand aimed toward target world position.</summary>
-        public void LaunchHandAt(Vector3 targetWorldPos) { if (IsAvailable) Raw.TryLaunchHandAtPosition(targetWorldPos); }
+        public void LaunchHandAt(Vector3 targetWorldPos)
+        {
+            if (IsAvailable)
+            {
+                Raw.TryLaunchHandAtPosition(targetWorldPos);
+                Debug.Log($"[RombyLib.Weapons] Launched grab hand toward {targetWorldPos}.");
+            }
+        }
 
         /// <summary>Number of grab hands currently active in world.</summary>
         public int ActiveHandsCount => IsAvailable ? Raw.GetActiveHandCount() : 0;
@@ -900,10 +1612,24 @@ namespace RombyLib
         internal TheScreamerHelper(Func<Arma13Controller> getter) : base(getter) { }
 
         /// <summary>Starts microphone audio recording buffer.</summary>
-        public void StartRecording() { if (IsAvailable) Raw.StartRecording(); }
+        public void StartRecording()
+        {
+            if (IsAvailable)
+            {
+                Raw.StartRecording();
+                Debug.Log("[RombyLib.Weapons] The Screamer started recording.");
+            }
+        }
 
         /// <summary>Stops recording and fires acoustic shockwave based on sound input.</summary>
-        public void StopRecording() { if (IsAvailable) Raw.StopRecordingAndFire(); }
+        public void StopRecording()
+        {
+            if (IsAvailable)
+            {
+                Raw.StopRecordingAndFire();
+                Debug.Log("[RombyLib.Weapons] The Screamer stopped recording and fired shockwave.");
+            }
+        }
 
         /// <summary>Current upgrade level.</summary>
         public int Level => IsAvailable ? Raw.GetCurrentLevel() : 0;

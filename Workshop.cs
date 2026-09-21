@@ -46,6 +46,7 @@ namespace RombyLib
                 runnerObj.AddComponent<WorkshopRunner>();
 
                 _isInitialized = true;
+                Debug.Log("[RombyLib.Workshop] Initialized Workshop runner.");
             }
             catch (Exception ex)
             {
@@ -85,6 +86,8 @@ namespace RombyLib
                 UpdateItemStatus(item);
                 _items.Add(item);
             }
+
+            Debug.Log($"[RombyLib.Workshop] Refreshed {actualCount} subscribed workshop items.");
         }
 
         /// <summary>
@@ -113,6 +116,10 @@ namespace RombyLib
             if (!started)
             {
                 Debug.LogWarning($"[RombyLib.Workshop] SteamUGC.DownloadItem returned false for item ID: {id}.");
+            }
+            else
+            {
+                Debug.Log($"[RombyLib.Workshop] Started downloading workshop item: {id}.");
             }
 
             _activeDownloads.Add(new DownloadTask
@@ -156,6 +163,7 @@ namespace RombyLib
                     UpdateItemStatus(task.Item);
 
                     _activeDownloads.RemoveAt(i);
+                    Debug.Log($"[RombyLib.Workshop] Successfully downloaded workshop item {task.Id} ('{task.Item.Title}').");
 
                     try
                     {
