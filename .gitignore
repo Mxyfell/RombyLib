@@ -361,3 +361,12 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# Local test files
+[Tt]est/
+
+# IDE files
+.idea/
+*.DotSettings.user
+
+

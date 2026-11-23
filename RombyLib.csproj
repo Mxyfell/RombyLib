@@ -1,20 +1,23 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
     <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Steamworks.NET" Version="2024.8.0" />
-  </ItemGroup>
-
-  <ItemGroup>
+    <Reference Include="com.rlabrecque.steamworks.net">
+      <HintPath>G:\SteamLibrary\steamapps\common\Rombykon\BepInEx\interop\com.rlabrecque.steamworks.net.dll</HintPath>
+    </Reference>
     <Reference Include="0Harmony">
       <HintPath>G:\SteamLibrary\steamapps\common\Rombykon\BepInEx\core\0Harmony.dll</HintPath>
     </Reference>
     <Reference Include="Assembly-CSharp">
       <HintPath>G:\SteamLibrary\steamapps\common\Rombykon\BepInEx\interop\Assembly-CSharp.dll</HintPath>
+    </Reference>
+    <Reference Include="Assembly-CSharp-firstpass">
+      <HintPath>G:\SteamLibrary\steamapps\common\Rombykon\BepInEx\interop\Assembly-CSharp-firstpass.dll</HintPath>
     </Reference>
     <Reference Include="BepInEx.Core">
       <HintPath>G:\SteamLibrary\steamapps\common\Rombykon\BepInEx\core\BepInEx.Core.dll</HintPath>
@@ -37,6 +40,46 @@
     <Reference Include="UnityEngine.SharedInternalsModule">
       <HintPath>G:\SteamLibrary\steamapps\common\Rombykon\BepInEx\interop\UnityEngine.SharedInternalsModule.dll</HintPath>
     </Reference>
+    <Reference Include="Unity.InputSystem">
+      <HintPath>G:\SteamLibrary\steamapps\common\Rombykon\BepInEx\interop\Unity.InputSystem.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>G:\SteamLibrary\steamapps\common\Rombykon\BepInEx\interop\UnityEngine.IMGUIModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>G:\SteamLibrary\steamapps\common\Rombykon\BepInEx\interop\UnityEngine.TextRenderingModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.ImageConversionModule">
+      <HintPath>G:\SteamLibrary\steamapps\common\Rombykon\BepInEx\interop\UnityEngine.ImageConversionModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.Physics2DModule">
+      <HintPath>G:\SteamLibrary\steamapps\common\Rombykon\BepInEx\interop\UnityEngine.Physics2DModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>G:\SteamLibrary\steamapps\common\Rombykon\BepInEx\interop\UnityEngine.UI.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>G:\SteamLibrary\steamapps\common\Rombykon\BepInEx\interop\UnityEngine.UIModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.AudioModule">
+      <HintPath>G:\SteamLibrary\steamapps\common\Rombykon\BepInEx\interop\UnityEngine.AudioModule.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>G:\SteamLibrary\steamapps\common\Rombykon\BepInEx\interop\Unity.TextMeshPro.dll</HintPath>
+    </Reference>
+    <Reference Include="Nobi.UiRoundedCorners">
+      <HintPath>G:\SteamLibrary\steamapps\common\Rombykon\BepInEx\interop\Nobi.UiRoundedCorners.dll</HintPath>
+    </Reference>
+    <Reference Include="Cinemachine">
+      <HintPath>G:\SteamLibrary\steamapps\common\Rombykon\BepInEx\interop\Cinemachine.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.AnimationModule">
+      <HintPath>G:\SteamLibrary\steamapps\common\Rombykon\BepInEx\interop\UnityEngine.AnimationModule.dll</HintPath>
+    </Reference>
   </ItemGroup>
+
+  <Target Name="CopyPluginToGame" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="G:\SteamLibrary\steamapps\common\Rombykon\BepInEx\plugins\RombyLIB\" SkipUnchangedFiles="false" ContinueOnError="true" />
+  </Target>
 
 </Project>

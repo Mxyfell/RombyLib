@@ -1,9 +1,12 @@
-﻿using BepInEx;
+using BepInEx;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
 
 namespace RombyLib
 {
+    /// <summary>
+    /// BepInEx plugin entry point for RombyLib.
+    /// </summary>
     [BepInPlugin(ModGUID, ModName, ModVersion)]
     internal class Hook : BasePlugin
     {
@@ -17,6 +20,7 @@ namespace RombyLib
         {
             Logger = Log;
             Romby.Init();
+            Test.Init();
             Log.LogInfo(ModName + " v" + ModVersion + " loaded successfully.");
         }
     }
